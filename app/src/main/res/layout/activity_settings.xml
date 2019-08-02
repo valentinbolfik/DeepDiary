@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.coordinatorlayout.widget.CoordinatorLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    tools:context=".SettingsActivity">
+
+    <com.google.android.material.bottomappbar.BottomAppBar
+        android:id="@+id/bottomAppBar_settings"
+        style="@style/Widget.MaterialComponents.BottomAppBar"
+        android:background="@drawable/rounded_dialog"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        app:hideOnScroll="true"
+        app:fabAlignmentMode="end"
+        app:fabCradleMargin="0dp"
+        app:fabCradleRoundedCornerRadius="0dp"/>
+
+    <fragment
+        android:id="@+id/activity_settings_fragment"
+        android:name="com.vb.deepdiary.SettingsFragment"
+        android:layout_width="match_parent"
+        android:layout_height="670dp" />
+
+</androidx.coordinatorlayout.widget.CoordinatorLayout>
