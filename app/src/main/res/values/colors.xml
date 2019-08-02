@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:tools="http://schemas.android.com/tools">
+    <!--TODO better light/day theme-->
+
     <color name="googleBlue" tools:ignore="UnusedResources">#4285F4</color>
     <color name="googleBlueDark" tools:ignore="UnusedResources">#0059c1</color>
     <color name="googleRed" tools:ignore="UnusedResources">#DB4437</color>

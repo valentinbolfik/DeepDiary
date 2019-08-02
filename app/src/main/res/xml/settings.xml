@@ -7,17 +7,4 @@
         android:key="dark_theme"
         app:iconSpaceReserved="false"
         android:title="Dark Theme" />
-    <androidx.preference.SwitchPreferenceCompat
-        android:defaultValue="false"
-        app:iconSpaceReserved="false"
-        android:key="password_switch"
-        android:title="Password" />
-    <androidx.preference.EditTextPreference
-        android:defaultValue=""
-        android:key="password"
-        android:selectAllOnFocus="true"
-        android:singleLine="true"
-        android:title="Change password"
-        android:enabled="false"
-        app:iconSpaceReserved="false"/>
 </androidx.preference.PreferenceScreen>

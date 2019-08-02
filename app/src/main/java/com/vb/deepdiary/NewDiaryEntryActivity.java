@@ -66,6 +66,8 @@ public class NewDiaryEntryActivity extends AppCompatActivity {
     @BindView(R.id.button_date) Button buttonDate;
     @BindView(R.id.button_time) Button buttonTime;
 
+    //TODO Encryption
+
     @NonNull
     public static Intent createIntent(@NonNull Context context, String title, String content, String ID, String time) {
         Intent intent = new Intent().setClass(context, NewDiaryEntryActivity.class);
