@@ -15,6 +15,8 @@ import android.view.View;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.ProgressBar;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
@@ -33,15 +35,30 @@ import com.google.firebase.firestore.CollectionReference;
 import com.google.firebase.firestore.DocumentReference;
 import com.google.firebase.firestore.FirebaseFirestore;
 
+import java.io.ByteArrayOutputStream;
+import java.nio.charset.StandardCharsets;
+import java.security.SecureRandom;
+import java.security.spec.KeySpec;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.Map;
+
+import javax.crypto.Cipher;
+import javax.crypto.SecretKey;
+import javax.crypto.SecretKeyFactory;
+import javax.crypto.spec.IvParameterSpec;
+import javax.crypto.spec.PBEKeySpec;
+import javax.crypto.spec.SecretKeySpec;
 
 import butterknife.BindString;
 import butterknife.BindView;
 import butterknife.ButterKnife;
 import butterknife.OnClick;
+import io.reactivex.Observable;
+import io.reactivex.android.schedulers.AndroidSchedulers;
+import io.reactivex.schedulers.Schedulers;
 
 @SuppressWarnings("FieldCanBeLocal")
 public class NewDiaryEntryActivity extends AppCompatActivity {
@@ -65,8 +82,8 @@ public class NewDiaryEntryActivity extends AppCompatActivity {
     @BindView(R.id.bottomAppBar) BottomAppBar toolbar;
     @BindView(R.id.button_date) Button buttonDate;
     @BindView(R.id.button_time) Button buttonTime;
-
-    //TODO Encryption
+    @BindView(R.id.textView_encrypt) TextView textViewEncrypting;
+    @BindView(R.id.progressBar_encrypting) ProgressBar encryptingBar;
 
     @NonNull
     public static Intent createIntent(@NonNull Context context, String title, String content, String ID, String time) {
@@ -160,6 +177,7 @@ public class NewDiaryEntryActivity extends AppCompatActivity {
         checkIfEmpty(content, title);
     }
 
+    //Deselects TextInputLayout on tap outside of the layout
     @Override
     public boolean dispatchTouchEvent(MotionEvent event) {
         if (event.getAction() == MotionEvent.ACTION_DOWN) {
@@ -182,10 +200,12 @@ public class NewDiaryEntryActivity extends AppCompatActivity {
     @BindString(R.string.discard) String discard;
     @BindString(R.string.too_long) String tooLong;
 
+    @SuppressLint("CheckResult")
     @OnClick(R.id.fab_save)
     public void saveEntry() {
-        String content = TIETContent.getText() != null ? TIETContent.getText().toString() : null;
-        String title = TIETTitle.getText() != null ? TIETTitle.getText().toString() : null;
+        content = TIETContent.getText() != null ? TIETContent.getText().toString() : null;
+        title = TIETTitle.getText() != null ? TIETTitle.getText().toString() : null;
+        //Calls saveToFirebase method if title and content are within limits
         if (title != null && title.length() > 50) {
             TILTitle.setError(tooLong);
             TILTitle.setErrorEnabled(true);
@@ -218,45 +238,26 @@ public class NewDiaryEntryActivity extends AppCompatActivity {
         }
     }
 
+    @SuppressLint("CheckResult")
     private void saveToFirebase(String content, String title) {
         FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
         if (currentUser != null && ((title != null && !title.equals("")) && (content != null && !content.equals("")))) {
-            String UUID = currentUser.getUid();
             DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd.MM.yyyy_HH:mm");
             LocalDateTime time = LocalDateTime.parse(currentDate + "_" + currentTime, formatter);
             diaryEntryData.put("Title", title);
-            diaryEntryData.put("Content", content);
             diaryEntryData.put("Time", time);
-            //Check if entry already exists in database
-            if (ID == null) {
-                CollectionReference db = FirebaseFirestore.getInstance()
-                        .collection(MainActivity.COLLECTION).document(UUID)
-                        .collection("diary_entries");
-                db.add(diaryEntryData)
-                        .addOnSuccessListener(documentReference -> {
-                            Toast.makeText(this, "Entry added successfully.", Toast.LENGTH_SHORT).show();
-                            Log.d(TAG, "Data added successfully!");
-                        })
-                        .addOnFailureListener(e -> {
-                            Toast.makeText(this, "Unknown error", Toast.LENGTH_SHORT).show();
-                            Log.w(TAG, "Error adding data!", e);}
-                        );
-            } else {
-                //If entry already exists in database, only update fields
-                DocumentReference db = FirebaseFirestore.getInstance()
-                        .collection(MainActivity.COLLECTION).document(UUID)
-                        .collection("diary_entries").document(ID);
-                db.update(diaryEntryData)
-                        .addOnSuccessListener(documentReference -> {
-                            Toast.makeText(this, "Entry updated successfully.", Toast.LENGTH_SHORT).show();
-                            Log.d(TAG, "Data updated successfully!");
-                        })
-                        .addOnFailureListener(e -> {
-                            Toast.makeText(this, "Unknown error", Toast.LENGTH_SHORT).show();
-                            Log.w(TAG, "Error updating data!", e);
-                        });
-            }
-            finish();
+
+            encryptingBar.setIndeterminate(true);
+            textViewEncrypting.setVisibility(View.VISIBLE);
+
+            //noinspection ResultOfMethodCallIgnored
+            Observable.fromCallable(() -> encrypt(content, currentUser.getUid()))
+                    .subscribeOn(Schedulers.computation())
+                    .observeOn(AndroidSchedulers.mainThread())
+                    .subscribe(result -> {
+                        diaryEntryData.put("Content", result);
+                        sendDataToFirebase();
+                    });
         } else {
             //Checks if both fields are empty if yes then finish activity, if not then display warning on the empty field
             if ((title != null && title.equals("")) || (content != null && content.equals(""))) {
@@ -277,6 +278,72 @@ public class NewDiaryEntryActivity extends AppCompatActivity {
                 finish();
             }
         }
+    }
+
+    private void sendDataToFirebase() {
+        Log.i(TAG, "sendDataToFirebase: sending data.");
+        FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
+        if (currentUser != null) {
+            String UUID = currentUser.getUid();
+            //Check if entry already exists in database
+            if (ID == null) {
+                CollectionReference db = FirebaseFirestore.getInstance()
+                        .collection(MainActivity.COLLECTION).document(UUID)
+                        .collection("diary_entries");
+                db.add(diaryEntryData)
+                        .addOnSuccessListener(documentReference -> {
+                            Toast.makeText(this, "Entry added successfully.", Toast.LENGTH_SHORT).show();
+                            Log.d(TAG, "Data added successfully!");
+                        })
+                        .addOnFailureListener(e -> {
+                                    Toast.makeText(this, "Unknown error", Toast.LENGTH_SHORT).show();
+                                    Log.w(TAG, "Error adding data!", e);
+                                }
+                        );
+            } else {
+                //If entry already exists in database, only update fields
+                DocumentReference db = FirebaseFirestore.getInstance()
+                        .collection(MainActivity.COLLECTION).document(UUID)
+                        .collection("diary_entries").document(ID);
+                db.update(diaryEntryData)
+                        .addOnSuccessListener(documentReference -> {
+                            Toast.makeText(this, "Entry updated successfully.", Toast.LENGTH_SHORT).show();
+                            Log.d(TAG, "Data updated successfully!");
+                        })
+                        .addOnFailureListener(e -> {
+                            Toast.makeText(this, "Unknown error", Toast.LENGTH_SHORT).show();
+                            Log.w(TAG, "Error updating data!", e);
+                        });
+            }
+        }
+        finish();
+    }
+
+    private String encrypt(String strToEncrypt, String password) {
+        try {
+            SecureRandom secureRandom = new SecureRandom();
+            byte[] salt = new byte[128];
+            byte[] iv = new byte[16];
+            secureRandom.nextBytes(salt);
+            secureRandom.nextBytes(iv);
+            IvParameterSpec ivParamSpec = new IvParameterSpec(iv);
+            SecretKeyFactory factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256");
+            KeySpec spec = new PBEKeySpec(password.toCharArray(), salt, 65536, 256);
+            SecretKey tmp = factory.generateSecret(spec);
+            SecretKeySpec secretKey = new SecretKeySpec(tmp.getEncoded(), "AES");
+            Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
+            cipher.init(Cipher.ENCRYPT_MODE, secretKey, ivParamSpec);
+            byte[] encrypted = cipher.doFinal(strToEncrypt.getBytes(StandardCharsets.UTF_8));
+            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+            outputStream.write(encrypted);
+            outputStream.write(iv);
+            outputStream.write(salt);
+            byte[] encryptedData = outputStream.toByteArray();
+            return Base64.getEncoder().encodeToString(encryptedData);
+        } catch (Exception e) {
+            System.out.println("Error while encrypting: " + e.toString());
+        }
+        return null;
     }
 
     @OnClick(R.id.button_date)

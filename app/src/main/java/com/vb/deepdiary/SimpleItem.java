@@ -82,6 +82,7 @@ class SimpleItem extends AbstractItem<SimpleItem, SimpleItem.ViewHolder> impleme
         return new ViewHolder(v);
     }
 
+    //Compare two items, used for sorting
     @Override
     public int compareTo(@NonNull SimpleItem simpleItem) {
         return getLocalDateTime().compareTo(simpleItem.getLocalDateTime());

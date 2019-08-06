@@ -5,16 +5,17 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.os.Bundle;
-import android.util.Log;
 import android.view.MenuItem;
 import android.view.View;
 import android.widget.ImageView;
+import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.app.AppCompatDelegate;
+import androidx.coordinatorlayout.widget.CoordinatorLayout;
 import androidx.core.widget.NestedScrollView;
 import androidx.preference.PreferenceManager;
 import androidx.recyclerview.widget.LinearLayoutManager;
@@ -34,16 +35,29 @@ import com.mikepenz.fastadapter.FastAdapter;
 import com.mikepenz.fastadapter.adapters.ItemAdapter;
 import com.squareup.picasso.Picasso;
 
+import java.security.spec.KeySpec;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Base64;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import javax.crypto.Cipher;
+import javax.crypto.SecretKey;
+import javax.crypto.SecretKeyFactory;
+import javax.crypto.spec.IvParameterSpec;
+import javax.crypto.spec.PBEKeySpec;
+import javax.crypto.spec.SecretKeySpec;
+
 import butterknife.BindView;
 import butterknife.ButterKnife;
 import butterknife.OnClick;
+import io.reactivex.Observable;
+import io.reactivex.android.schedulers.AndroidSchedulers;
+import io.reactivex.schedulers.Schedulers;
 
 public class MainActivity extends AppCompatActivity implements NavigationView.OnNavigationItemSelectedListener,
         SharedPreferences.OnSharedPreferenceChangeListener {
@@ -52,13 +66,12 @@ public class MainActivity extends AppCompatActivity implements NavigationView.On
     static final String COLLECTION = "users_diaries";
     private static SharedPreferences prefs;
 
-    private static final Map<String, Object> userData = new HashMap<>();
     private final List<SimpleItem> rvItems = new ArrayList<>();
     private volatile FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
 
     private int id = 100;
 
-    //create the ItemAdapter holding  Items
+    //create the ItemAdapter holding  items
     private final ItemAdapter<SimpleItem> itemAdapter = new ItemAdapter<>();
 
     @BindView(R.id.fab) FloatingActionButton fab;
@@ -68,6 +81,7 @@ public class MainActivity extends AppCompatActivity implements NavigationView.On
     @BindView(R.id.user_email_textView) TextView userEmailView;
     @BindView(R.id.navigation_view) NavigationView navView;
     @BindView(R.id.recyclerView_diary_entries) RecyclerView mRecyclerViewEntries;
+    @BindView(R.id.progressBar_decrypting) ProgressBar progressBarDecrypting;
 
     private BottomSheetBehavior<NestedScrollView> BSB;
 
@@ -79,7 +93,16 @@ public class MainActivity extends AppCompatActivity implements NavigationView.On
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        //Sets default preferences on the first start
+        PreferenceManager.setDefaultValues(this, R.xml.settings, false);
         setUpSharedPreferences();
+        //Load dark_theme boolean from preferences and set theme accordingly
+        boolean isDark = prefs.getBoolean("dark_theme", false);
+        if (isDark) {
+            AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES);
+        } else {
+            AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO);
+        }
         //Check if user is signed in, if not prompt sign in
         currentUser = FirebaseAuth.getInstance().getCurrentUser();
         if (currentUser == null) {
@@ -87,17 +110,29 @@ public class MainActivity extends AppCompatActivity implements NavigationView.On
             finish();
             return;
         } else {
+            //Writes time of access to database
             DocumentReference db = FirebaseFirestore.getInstance().collection(COLLECTION).document(currentUser.getUid());
             LocalDateTime time = LocalDateTime.now();
+            final Map<String, Object> userData = new HashMap<>();
             userData.put("last_access", time);
             db.set(userData);
         }
-        Log.i(TAG, "onCreate: " + currentUser.getUid());
 
         setContentView(R.layout.activity_main);
         ButterKnife.bind(this);
 
         BSB = BottomSheetBehavior.from(NSV);
+        //Makes fab hide when dragging NSV
+        CoordinatorLayout.LayoutParams lp = (CoordinatorLayout.LayoutParams) fab.getLayoutParams();
+        FloatingActionButton.Behavior behavior = (FloatingActionButton.Behavior) lp.getBehavior();
+        if (behavior != null) {
+            behavior.setAutoHideEnabled(false);
+        } else {
+            behavior = new FloatingActionButton.Behavior();
+            behavior.setAutoHideEnabled(false);
+            lp.setBehavior(behavior);
+        }
+
         BSB.setBottomSheetCallback(new BottomSheetBehavior.BottomSheetCallback() {
             @Override
             public void onStateChanged(@NonNull View bottomSheet, int newState) {
@@ -106,6 +141,9 @@ public class MainActivity extends AppCompatActivity implements NavigationView.On
                         fab.show();
                         break;
                     case BottomSheetBehavior.STATE_DRAGGING:
+                        if (fab.isShown()) {
+                            fab.hide();
+                        }
                         break;
                     case BottomSheetBehavior.STATE_EXPANDED:
                         fab.hide();
@@ -114,9 +152,9 @@ public class MainActivity extends AppCompatActivity implements NavigationView.On
                         fab.hide();
                         break;
                     case BottomSheetBehavior.STATE_HIDDEN:
+                        BSB.setState(BottomSheetBehavior.STATE_COLLAPSED);
                         break;
                     case BottomSheetBehavior.STATE_SETTLING:
-
                         if (fab.isShown()) {
                             fab.hide();
                         } else {
@@ -143,6 +181,7 @@ public class MainActivity extends AppCompatActivity implements NavigationView.On
         });
 
         mRecyclerViewEntries.setLayoutManager(new LinearLayoutManager(this));
+        //Sets margin between each item in recycler view
         mRecyclerViewEntries.addItemDecoration(new MarginItemDecorator(8));
         //set adapter to the RecyclerView
         mRecyclerViewEntries.setAdapter(mFastAdapter);
@@ -168,25 +207,29 @@ public class MainActivity extends AppCompatActivity implements NavigationView.On
         startActivity(NewDiaryEntryActivity.createIntent(this, null, null, null, null));
     }
 
+    @SuppressLint("CheckResult")
     private void addListenerForChange() {
         FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
         if (currentUser != null) {
             Query db = FirebaseFirestore.getInstance()
                     .collection(MainActivity.COLLECTION).document(currentUser.getUid())
-                    .collection("diary_entries").orderBy("Time");
+                    .collection("diary_entries");
             db.addSnapshotListener((queryDocumentSnapshots, e) -> {
                 if (e != null) {
                     System.out.println("Listen failed: " + e);
                     return;
                 }
                 if (queryDocumentSnapshots != null) {
+                    progressBarDecrypting.setVisibility(View.VISIBLE);
+                    progressBarDecrypting.setIndeterminate(true);
                     rvItems.clear();
-                    itemAdapter.clear();
                     id = 100;
                     for (DocumentSnapshot doc : queryDocumentSnapshots) {
+                        int x = queryDocumentSnapshots.size();
                         String title = (String) doc.get("Title");
                         String content = (String) doc.get("Content");
                         HashMap dateTime = (HashMap) doc.get("Time");
+                        //noinspection ConstantConditions
                         @SuppressLint("DefaultLocale") String time = String.format("%02d", (Long) dateTime.get("dayOfMonth"))
                                 + "." + String.format("%02d", (Long) dateTime.get("monthValue")) + "." + dateTime.get("year")
                                 + "_" + String.format("%02d", (Long) dateTime.get("hour")) + ":" + String.format("%02d", (Long) dateTime.get("minute"));
@@ -196,13 +239,35 @@ public class MainActivity extends AppCompatActivity implements NavigationView.On
                                 .withID(doc.getId())
                                 .withDateTime(time)
                                 .withIdentifier(id);
-                        id = ++id;
-                        rvItems.add(item);
+                        //noinspection ResultOfMethodCallIgnored
+                        Observable.fromCallable(() -> decrypt(content, currentUser.getUid()))
+                                .subscribeOn(Schedulers.computation())
+                                .observeOn(AndroidSchedulers.mainThread())
+                                .subscribe(result -> {
+                                    item.withContent(result);
+                                    id = ++id;
+                                    rvItems.add(item);
+                                    if (rvItems.size() == x) {
+                                        itemAdapter.clear();
+                                        Collections.sort(rvItems);
+                                        itemAdapter.add(rvItems);
+                                        progressBarDecrypting.setVisibility(View.GONE);
+                                        progressBarDecrypting.setIndeterminate(false);
+                                        //noinspection ConstantConditions
+                                        mRecyclerViewEntries.getAdapter().notifyDataSetChanged();
+                                    }
+                                }, throwable -> {
+                                    item.withContent(content);
+                                    rvItems.add(item);
+                                    itemAdapter.clear();
+                                    Collections.sort(rvItems);
+                                    itemAdapter.add(rvItems);
+                                    progressBarDecrypting.setVisibility(View.GONE);
+                                    progressBarDecrypting.setIndeterminate(false);
+                                    //noinspection ConstantConditions
+                                    mRecyclerViewEntries.getAdapter().notifyDataSetChanged();
+                                });
                     }
-                    Collections.sort(rvItems);
-                    itemAdapter.add(rvItems);
-                    //noinspection ConstantConditions
-                    mRecyclerViewEntries.getAdapter().notifyDataSetChanged();
                 }
             });
         } else {
@@ -237,7 +302,7 @@ public class MainActivity extends AppCompatActivity implements NavigationView.On
     }
 
     private void changeTheme() {
-        Log.i(TAG, "changeTheme: Theme changed");
+        //Switch day/night theme
         if (AppCompatDelegate.getDefaultNightMode() == AppCompatDelegate.MODE_NIGHT_NO) {
             AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES);
         } else {
@@ -245,8 +310,32 @@ public class MainActivity extends AppCompatActivity implements NavigationView.On
         }
     }
 
+    private String decrypt(String strToDecrypt, String password) {
+        try {
+            byte[] toDecryptByteArray = Base64.getDecoder().decode(strToDecrypt);
+            byte [] iv = Arrays.copyOfRange(toDecryptByteArray, toDecryptByteArray.length - 144, toDecryptByteArray.length - 128);
+            byte[] salt = Arrays.copyOfRange(toDecryptByteArray, toDecryptByteArray.length - 128, toDecryptByteArray.length);
+            byte[] content = Arrays.copyOfRange(toDecryptByteArray, 0, toDecryptByteArray.length - 144);
+
+            IvParameterSpec ivParamSpec = new IvParameterSpec(iv);
+
+            SecretKeyFactory factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256");
+            KeySpec spec = new PBEKeySpec(password.toCharArray(), salt, 65536, 256);
+            SecretKey tmp = factory.generateSecret(spec);
+            SecretKeySpec secretKey = new SecretKeySpec(tmp.getEncoded(), "AES");
+
+            Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5PADDING");
+            cipher.init(Cipher.DECRYPT_MODE, secretKey, ivParamSpec);
+            return new String(cipher.doFinal(content));
+        } catch (Exception e) {
+            System.out.println("Error while decrypting: " + e.toString());
+        }
+        return null;
+    }
+
     @Override
     protected void onResume() {
+        currentUser = FirebaseAuth.getInstance().getCurrentUser();
         if (currentUser == null) {
             restart();
         }
@@ -254,8 +343,19 @@ public class MainActivity extends AppCompatActivity implements NavigationView.On
     }
 
     @Override
+    public void onBackPressed() {
+        //Close bottom drawer if open else call super()
+        if (BSB.getState() == BottomSheetBehavior.STATE_EXPANDED) {
+            BSB.setState(BottomSheetBehavior.STATE_COLLAPSED);
+        } else {
+            super.onBackPressed();
+        }
+    }
+
+    @Override
     public boolean onNavigationItemSelected(@NonNull MenuItem item) {
         int id = item.getItemId();
+        BSB.setState(BottomSheetBehavior.STATE_COLLAPSED);
 
         if (id == R.id.nav_logout) {
             AuthUI.getInstance()
@@ -274,15 +374,15 @@ public class MainActivity extends AppCompatActivity implements NavigationView.On
     }
 
     @Override
-    protected void onDestroy() {
-        super.onDestroy();
-        prefs.unregisterOnSharedPreferenceChangeListener(this);
-    }
-
-    @Override
     public void onSharedPreferenceChanged(SharedPreferences sharedPreferences, String key) {
         if (key.equals("dark_theme")){
             changeTheme();
         }
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        prefs.unregisterOnSharedPreferenceChangeListener(this);
     }
 }

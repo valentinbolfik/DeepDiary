@@ -21,7 +21,7 @@
     <color name="color_error">#b00020</color>
 
     <color name="color_item_background">#dddddd</color>
-    <color name="color_surface_secondary">#cccccc</color>
+    <color name="color_surface_secondary">#dddddd</color>
     <color name="color_on_background_secondary">#111111</color>
 
     <!--"On" colors define how text, icons and strokes are colored in relation to the surface-->

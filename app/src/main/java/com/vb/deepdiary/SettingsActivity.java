@@ -26,6 +26,5 @@ public class SettingsActivity extends AppCompatActivity {
         //noinspection ConstantConditions
         bar.setDisplayHomeAsUpEnabled(true);
 
-
     }
 }
